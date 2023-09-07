@@ -1,0 +1,184 @@
+"""Swsth kai epiveveomeni ilopoihsh oti o By_hand upologismos tou Log_Likelihood vgazei to idio apotelesma me thn
+etoimh synartisi. Prosoxi edw einai h swsth ilopoihsh tou log_likelihood"""
+from scipy.special import expit
+import arviz as az
+import numpy
+import numpyro.distributions as dist
+from jax import numpy as np
+import numpyro
+from numpyro.distributions import (Normal)
+from numpyro.infer import MCMC, NUTS, log_likelihood
+from numpyro import sample
+from itertools import combinations
+from jax import random
+import math
+import operator
+import pandas as pd
+
+
+assert numpyro.__version__.startswith("0.11.0")
+az.style.use("arviz-darkgrid")
+
+def Generate_Observational_Data(sample_size,rng):
+
+    alpha = [-4, 4]
+    beta = [0.4, 1.25, 1.4, 0.5]  # [Z1, Z2, X, Z2]
+    # beta = [1.3, 1.25, 1.4, 1.15]
+
+    e = dist.Normal(0, 1).sample(random.PRNGKey(numpy.random.randint(rng)), sample_shape=(sample_size,))
+    Z1 = dist.Normal(0, 15).sample(random.PRNGKey(numpy.random.randint(rng)), sample_shape=(sample_size,))
+    Z2 = dist.Normal(0, 10).sample(random.PRNGKey(numpy.random.randint(rng)), sample_shape=(sample_size,))
+
+    μ_true = beta[0] * Z1 + beta[1] * Z2
+    p_true = expit(μ_true)
+    X = dist.Bernoulli(p_true).sample(random.PRNGKey(numpy.random.randint(rng)))
+
+    logit_0 = alpha[0] + (beta[2] * X + beta[3]*Z2) + e
+    logit_1 = alpha[1] + (beta[2] * X + beta[3]*Z2) + e
+    q_0 = expit(logit_0)
+    q_1 = expit(logit_1)
+    prob_0 = q_0
+    prob_1 = q_1 - q_0
+    prob_2 = 1 - q_1
+    probs = np.stack((prob_0, prob_1, prob_2), axis=1)
+
+    Y = dist.Categorical(probs=probs).sample(random.PRNGKey(numpy.random.randint(rng)), sample_shape=(1,))[0]
+    data = pd.DataFrame({"Y": Y, 'X': X, "Z1": Z1, "Z2": Z2})
+
+    return data, Y, X, Z1, Z2
+
+
+
+correct_MB = 0
+sample_size = 100
+
+for i in range(10):
+    data, Y, X, Z1, Z2 = Generate_Observational_Data(sample_size, 93+i)
+    print(data['Y'].value_counts())
+
+
+    trace = {}
+    samples = 100
+    trace['beta_X'] = dist.Normal(0, 1).sample(random.PRNGKey(numpy.random.randint(93+i)), sample_shape=(samples,))
+    trace['beta_Z1'] = dist.Normal(0, 1).sample(random.PRNGKey(numpy.random.randint(93+i)), sample_shape=(samples, ))
+    trace['beta_Z2'] = dist.Normal(0, 1).sample(random.PRNGKey(numpy.random.randint(93+i)), sample_shape=(samples, ))
+
+
+    """By Hand tropos"""
+    #Gia (X,Z1,Z2)
+    P = 0
+    for dok in range(len(trace['beta_X'])):
+
+        a_0 = -4
+        a_1 = 4
+
+        logit_0 = a_0 - (trace['beta_X'][dok] * X + trace['beta_Z1'][dok] * Z1 + trace['beta_Z2'][dok] * Z2)
+        logit_1 = a_1 - (trace['beta_X'][dok] * X + trace['beta_Z1'][dok] * Z1 + trace['beta_Z2'][dok] * Z2)
+        prob_0 = expit(logit_0)
+        prob_1 = expit(logit_1) - prob_0
+        prob_2 = 1 - expit(logit_1)
+    # Calculate Likelihood
+        prob_0[prob_0 == 0] = 1.e-17
+        prob_1[prob_1 == 0] = 1.e-17
+        prob_2[prob_2 == 0] = 1.e-17
+
+        for i in range(len(prob_0)):
+            if Y[i] == 0:
+                P = P + math.log(prob_0[i])
+            elif Y[i] == 1:
+                P = P + math.log(prob_1[i])
+            else:
+                P = P + math.log(prob_2[i])
+    print(P/3)
+
+    #Gia (X,Z1)
+    P = 0
+    #gia kathe bi apo to trace ypologise to log_likelihood gia ola ta data kai prosethese ola ta log_likelihood
+    # ayta gia to marginal
+    for dok in range(len(trace['beta_X'])):
+
+        a_0 = -4
+        a_1 = 4
+
+        logit_0 = a_0 - (trace['beta_X'][dok] * X + trace['beta_Z1'][dok] * Z1)
+        logit_1 = a_1 - (trace['beta_X'][dok] * X + trace['beta_Z1'][dok] * Z1)
+
+        prob_0 = expit(logit_0)
+        prob_1 = expit(logit_1) - prob_0
+        prob_2 = 1 - expit(logit_1)
+    # Calculate Likelihood
+        prob_0[prob_0 == 0] = 1.e-17
+        prob_1[prob_1 == 0] = 1.e-17
+        prob_2[prob_2 == 0] = 1.e-17
+
+
+        for i in range(len(prob_0)):
+            if Y[i] == 0:
+                P = P + math.log(prob_0[i])
+            elif Y[i] == 1:
+                P = P + math.log(prob_1[i])
+            else:
+                P = P + math.log(prob_2[i])
+    print(P/2)
+    #Gia (X,Z2)
+    P = 0
+    #gia kathe bi apo to trace ypologise to log_likelihood gia ola ta data kai prosethese ola ta log_likelihood
+    # ayta gia to marginal
+    for dok in range(len(trace['beta_X'])):
+
+        a_0 = -4
+        a_1 = 4
+
+        logit_0 = a_0 - (trace['beta_X'][dok] * X + trace['beta_Z2'][dok] * Z2)
+        logit_1 = a_1 - (trace['beta_X'][dok] * X + trace['beta_Z2'][dok] * Z2)
+
+        prob_0 = expit(logit_0)
+        prob_1 = expit(logit_1) - prob_0
+        prob_2 = 1 - expit(logit_1)
+    # Calculate Likelihood
+        prob_0[prob_0 == 0] = 1.e-17
+        prob_1[prob_1 == 0] = 1.e-17
+        prob_2[prob_2 == 0] = 1.e-17
+
+
+        for i in range(len(prob_0)):
+            if Y[i] == 0:
+                P = P + math.log(prob_0[i])
+            elif Y[i] == 1:
+                P = P + math.log(prob_1[i])
+            else:
+                P = P + math.log(prob_2[i])
+    print(P/2)
+
+    #Gia {X}
+    P = 0
+    #gia kathe bi apo to trace ypologise to log_likelihood gia ola ta data kai prosethese ola ta log_likelihood
+    # ayta gia to marginal
+    for dok in range(len(trace['beta_X'])):
+
+        a_0 = -4
+        a_1 = 4
+
+        logit_0 = a_0 - (trace['beta_X'][dok] * X)
+        logit_1 = a_1 - (trace['beta_X'][dok] * X)
+
+        prob_0 = expit(logit_0)
+        prob_1 = expit(logit_1) - prob_0
+        prob_2 = 1 - expit(logit_1)
+    # Calculate Likelihood
+        prob_0[prob_0 == 0] = 1.e-17
+        prob_1[prob_1 == 0] = 1.e-17
+        prob_2[prob_2 == 0] = 1.e-17
+
+
+        for i in range(len(prob_0)):
+            if Y[i] == 0:
+                P = P + math.log(prob_0[i])
+            elif Y[i] == 1:
+                P = P + math.log(prob_1[i])
+            else:
+                P = P + math.log(prob_2[i])
+    print(P)
+    #
+    # """Telos By hand tropou"""
+    #
