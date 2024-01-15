@@ -1,3 +1,4 @@
+"""Create semi-synthetic data and implement our algorithm based on documentation that we set with Sofia and Greg for Binary outcomes"""
 import jax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
