@@ -1,29 +1,35 @@
-"""Create semi-synthetic data and implement our algorithm based on documentation that we set with Sofia and Greg for Binary outcomes"""
 import jax
 import jax.numpy as jnp
-import matplotlib.pyplot as plt
 import numpy as np
 import numpyro
 import numpyro.distributions as dist
 from numpyro.infer import MCMC, NUTS
-from jax import random, vmap
+from jax import random
 import numpy
 from itertools import combinations
 import operator
 import pandas as pd
-import arviz as az
 import time
 
+"""Na thimasai ama prostheseis mia bianry Z3 prepei na ftiaxeiw ta data sou, dld na ta kaneis standardize gia na mh 
+th valei mesa sto MB"""
 
 st = time.time()
 def Generate_Experimental_Data(sample_size):
 
     #beta_Y > T*Y + A*Y + Z1*T
-    beta_Y = jnp.array([1.4, 1.9, 1.7])
+    beta_Y = jnp.array([2.5, 1.9, 1.7])
     e = 0 + 1 * random.normal(random.PRNGKey(numpy.random.randint(1000)), (sample_size, 1))
 
     Z1 = 0 + 15 * random.normal(random.PRNGKey((numpy.random.randint(100))), (sample_size, 1))
     A = 0 + 10 * random.normal(random.PRNGKey((numpy.random.randint(100))), (sample_size, 1))
+    Z3 = 0 + 7 * random.normal(random.PRNGKey((numpy.random.randint(100))), (sample_size, 1))
+    Z4 = 0 + 3 * random.normal(random.PRNGKey((numpy.random.randint(100))), (sample_size, 1))
+
+    Z5 = dist.Bernoulli(probs=0.8).sample(random.PRNGKey(numpy.random.randint(100)), (sample_size, 1))
+    Z6 = dist.Bernoulli(probs=0.5).sample(random.PRNGKey(numpy.random.randint(100)), (sample_size, 1))
+    Z7 = dist.Bernoulli(probs=0.6).sample(random.PRNGKey(numpy.random.randint(100)), (sample_size, 1))
+    Z8 = dist.Bernoulli(probs=0.3).sample(random.PRNGKey(numpy.random.randint(100)), (sample_size, 1))
 
     T = dist.Bernoulli(probs=0.5).sample(random.PRNGKey(numpy.random.randint(100)), (sample_size, 1))
     data_T_A = jnp.concatenate((T, A, Z1), axis=1)
@@ -32,15 +38,28 @@ def Generate_Experimental_Data(sample_size):
 
     labels = Y
     # data pane X,Z1,Z2
-    data = jnp.concatenate((T, A, Z1), axis=1)
+    data = jnp.concatenate((T, A, Z1, Z3, Z4, Z5, Z6, Z7, Z8), axis=1)
 
     return data, labels
 Ne = 1000
 data_exp, labels_exp = Generate_Experimental_Data(Ne)
+#Edw ekana allages kai exw valei binary to T kai sta Experimental
+T = data_exp[:, 0]
+A = data_exp[:, 1]
 
+var_6 = data_exp[:, 6] - data_exp[:, 6].mean()
+var_7 = data_exp[:, 7] - data_exp[:, 7].mean()
+var_8 = data_exp[:, 8] - data_exp[:, 8].mean()
+var_9 = data_exp[:, 9] - data_exp[:, 9].mean()
+
+T = np.array(T) - np.array(T).mean()
 """standardizes data and scale them to have mean 0 and std 0.5:"""
-# data_n_2 = 2 * (data - data.mean()) / (data.std())  # standardization
+data_exp = (data_exp - data_exp.mean()) * (0.5 / data_exp.std())  # standardization
 
+
+data_exp = np.concatenate((T[:, np.newaxis], data_exp[:, 1:5], var_6[:, np.newaxis],
+                           var_7[:, np.newaxis], var_8[:, np.newaxis], var_9[:, np.newaxis]), axis=1)
+print("Experimental data", data_exp)
 
 # Start from this source of randomness. We will split keys for subsequent operations.
 rng_key = random.PRNGKey(0)
@@ -65,21 +84,39 @@ mcmc.print_summary()
 
 trace = mcmc.get_samples()
 intercept = trace['alpha'].mean()
-slope = np.array([trace['beta'][:, 0].mean(), trace['beta'][:, 1].mean(), trace['beta'][:, 2].mean()])
+# slope = np.array([trace['beta'][:, 0].mean(), trace['beta'][:, 1].mean(), trace['beta'][:, 2].mean()])
+"""Gia osoi einai oi coefficients tou slope pane kai ftiaxe mou ta mean tous se mia lista, anti na to kanw xeirokinita 
+opws to kanw panw se sxolio """
+slope_list = []
+for i in range(len(trace['beta'][0, :])):
+    slope_list.append(trace['beta'][:, i].mean())
 
-A = data_exp[:, 1]
-Z1 = data_exp[:, 2]
+slope = np.array(slope_list)
+
+"""Pare oles tis stiles, dld oles tis metavlites ektos apo to T pou thelw na allaxo kai tha einai panta sthn 1h stili"""
 data_numpy = np.array(data_exp)
-print(data_numpy)
-T_new = []
-for i in range(len(data_numpy[:, 0])):
-    if data_numpy[i, 1] < 3:
-        T_new.append(0)
-    else:
-        T_new.append(1)
 
-obs_data = np.stack((T_new, A, Z1), axis=1)
-print(obs_data)
+# T_new = []
+# for i in range(len(data_numpy[:, 0])):
+#     if data_numpy[i, 1] < 0:
+#         T_new.append(0)
+#     else:
+#         T_new.append(1)
+
+"""Edw ftiaxnw to T_new sumfona me logistic regression, kanonika oso peirazw to syntelesti tha prepei na allazei"""
+z = np.dot(A, 5.2)
+def logistic(z):
+    return 1 / (1 + np.exp(-z))
+
+prob = logistic(z)
+print(prob)
+T_new = np.random.binomial(1, prob.flatten())
+T_new = T_new - T_new.mean()
+#Add T_new in the first column
+obs_data = np.concatenate((np.array(T_new)[:, np.newaxis], data_exp[:, 1:]), axis=1)
+# obs_data = np.stack((T_new, A, Z1), axis=1)
+print("Observational Data", obs_data)
+
 print("mean intercept", intercept)
 print("mean slope", slope)
 e = 0 + 1 * random.normal(random.PRNGKey(numpy.random.randint(1000)), (Ne, 1))
@@ -127,9 +164,6 @@ def sample_posterior(data, observed_data):
     # Get the posterior samples
     posterior_samples = mcmc.get_samples()
 
-    data_plot = az.from_numpyro(mcmc)
-    az.plot_trace(data_plot, compact=True, figsize=(15, 25))
-
     return posterior_samples
 
 # Calculate log likelihood for each posterior sample
@@ -163,6 +197,19 @@ def var_combinations(data):
 for i in range(1):
 
     data, observed_data = obs_data, obs_labels
+
+    # Import your necessary dependencies
+    from sklearn.feature_selection import RFE
+    from sklearn.linear_model import LogisticRegression
+
+    # Feature extraction
+    model = LogisticRegression()
+    rfe = RFE(model, n_features_to_select=1, step=1)
+    fit = rfe.fit(data, observed_data)
+    print("Num Features: %s" % (fit.n_features_))
+    print("Selected Features: %s" % (fit.support_))
+    print("Feature Ranking: %s" % (fit.ranking_))
+
     num_samples = 1000
     MB_Scores = {}
     IMB_Scores_obs = {}
@@ -198,7 +245,7 @@ for i in range(1):
                 subset_list.append(x)
     print('The subsets of MB are {}'.format(subset_list))
 
-    exp_data, exp_observed_data = data_exp, labels_exp
+    exp_data, exp_observed_data = data_exp[1:300, :], labels_exp[1:300]
 
     """For subsets of MB sample from experimental and observational data"""
     for j in range(len(subset_list)):
@@ -211,13 +258,15 @@ for i in range(1):
         prior_samples = sample_prior(exp_sub_data)
 
         marginal = calculate_log_marginal(num_samples, prior_samples, exp_sub_data, exp_observed_data)
-        print('Marginal {} from experimental sampling:'.format(reg_variables), marginal)
+        # print('Marginal {} from experimental sampling:'.format(reg_variables), marginal)
         IMB_Scores_exp[reg_variables] = marginal
 
         marginal = calculate_log_marginal(num_samples, posterior_samples, exp_sub_data, exp_observed_data)
-        print('Marginal {} from observational sampling:'.format(reg_variables), marginal)
+        # print('Marginal {} from observational sampling:'.format(reg_variables), marginal)
 
         IMB_Scores_obs[reg_variables] = marginal
+        if IMB_Scores_obs[reg_variables] > IMB_Scores_exp[reg_variables]:
+            print("CMB", reg_variables)
 
 
 print(IMB_Scores_exp)
@@ -230,3 +279,5 @@ et = time.time()
 # get the execution time
 elapsed_time = et - st
 print('Execution time:', elapsed_time, 'seconds')
+
+#9/10 me Ne = 300
